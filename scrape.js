@@ -1,9 +1,27 @@
-const axios = require('axios');
-const cheerio = require('cheerio');
+import axios from 'axios';
+import cheerio from 'cheerio';
+import { delay, generateCSVFile } from './utils.js';
+
 
 const initialUrl = 'https://www.otomoto.pl/ciezarowe/uzytkowe/mercedes-benz/od-+2014/q-actros?search%5Bfilter_enum_damaged%5D=0&search%5Border%5D=created_at+%3Adesc';
-let retryPageUrl = [];
-let retryItemUrl = [];
+
+var retryItemUrl = {};
+
+
+function getNextPageUrl(pageNum) {
+    return `${initialUrl}&page=${pageNum}`;
+}
+
+async function addItems(data) {
+    const $ = cheerio.load(data);
+    const items = {};
+    $('.ooa-19sk4h4.e1ioucql0 article').each((index, element) => {
+      const id = $(element).attr('id');
+      const itemUrl = $(element).find('h2 > a').attr('href');
+      items[id] = itemUrl;
+    });
+    return items;
+}
 
 async function getTotalAdsCount(data) {
   const $ = cheerio.load(data);
@@ -12,19 +30,8 @@ async function getTotalAdsCount(data) {
   return totalAdsCount;
 }
 
-async function addItems(data) {
-  const $ = cheerio.load(data);
-  const items = {};
-  $('.ooa-19sk4h4.e1ioucql0 article').each((index, element) => {
-    const id = $(element).attr('id');
-    const itemUrl = $(element).find('h2 > a').attr('href');
-    items[id] = itemUrl;
-  });
-  return items;
-}
 
-
-async function scrapeTruckItem(data) {
+async function scrapeTruckItem(data, itemLink) {
   const $ = cheerio.load(data);
   const details = {};
 
@@ -33,6 +40,7 @@ async function scrapeTruckItem(data) {
   const price = $('.price-wrapper div').attr('data-price');
   const currency = $('.price-wrapper .offer-price__currency').text();
   details.price = `${price} ${currency}`;
+  details.item_link = itemLink;
 
   const mapping = {
     'Data pierwszej rejestracji w historii pojazdu': 'registration_date',
@@ -54,10 +62,6 @@ async function scrapeTruckItem(data) {
 }
 
 
-function getNextPageUrl(pageNum) {
-  return `${initialUrl}&page=${pageNum}`;
-}
-
 async function fetchPage(url) {
   try {
     const response = await axios.get(url);
@@ -74,32 +78,51 @@ async function getTotalPageNum(data) {
     const lastPageNum = lastPageLink.match(/(\d+)$/)[0];
     return parseInt(lastPageNum, 10);
 }
-  
+
+async function getReadyItemsLink(totalPages) {
+  let itemsLink = {};
+  for (let i = 1; i <= totalPages; i++) {
+    const url = getNextPageUrl(i);
+    const response = await fetchPage(url);
+    
+    const eachItemLink = await addItems(response.data);
+    itemsLink = { ...itemsLink, ...eachItemLink };
+    console.log(url);
+    if (i > 50) break; //Max limit page 50
+  }
+  return itemsLink;
+}
+
+async function getAllData(itemsLink) {
+  let allData = [];
+  for (const id in itemsLink) {
+    const response = await fetchPage(itemsLink[id]);
+    if(response.status === undefined) {
+        retryItemUrl[id] = itemsLink[id];
+        continue;
+    }
+    const details = await scrapeTruckItem(response.data, itemsLink[id]);
+    allData.push(details);
+  }
+  return allData;
+}
 
 async function getAllItems() {
   const response = await fetchPage(initialUrl);
+  if(response.status === undefined) {
+    await delay(3000);
+    console.error(`Response undefined..`);
+    return getAllItems();
+  }
+
   const data = response.data;
 
   const totalAdsCount = await getTotalAdsCount(data);
   const totalPages = await getTotalPageNum(data);
 
-  let items = {};
-  for (let i = 1; i <= totalPages; i++) {
-    const url = getNextPageUrl(i);
-    const response = await fetchPage(url);
-    const data = response.data;
-    const item = await addItems(data);
-    items = { ...items, ...item };
-    console.log(url);
-    if (i > 50) break;
-  }
-
-  let allData = [];
-  for (const id in items) {
-    const response = await fetchPage(items[id]);
-    const details = await scrapeTruckItem(response.data);
-    allData.push(details);
-  }
+  const itemsLink = await getReadyItemsLink(totalPages);
+  
+  let allData = await getAllData(itemsLink);
 
   return { totalAdsCount, totalPages, allData };
 }
@@ -107,7 +130,16 @@ async function getAllItems() {
 
 (async () => {
     const { totalAdsCount, totalPages, allData } = await getAllItems();
-    console.log(allData);
-    console.log(totalAdsCount);
-    console.log(totalPages);
+
+    // Retry strategy
+    if(Object.keys(retryItemUrl).length > 0){
+        console.log('waiting.... ')
+        await delay(10000);
+        const data = await getAllData(retryItemUrl);
+        allData.push(...data);
+    }
+
+    generateCSVFile(allData);
+    
+
 })();
