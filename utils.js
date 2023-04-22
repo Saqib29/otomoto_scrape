@@ -10,7 +10,7 @@ function generateCSVFile(data){
     const csvFromArrayOfObjects = convertArrayToCSV(data);
     fs.writeFile('./result_data/results.csv', csvFromArrayOfObjects, err => {
         if(err) console.log(18, err);
-        console.log("csv file generated");
+        console.log("Resulst are saved into CSV file, please check ./result_data directory");
     });
 }
 

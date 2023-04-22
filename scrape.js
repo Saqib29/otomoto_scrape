@@ -140,6 +140,6 @@ async function getAllItems() {
     }
 
     generateCSVFile(allData);
-    
+    console.log(`Total Add counts ${totalAdsCount}`);
 
 })();
