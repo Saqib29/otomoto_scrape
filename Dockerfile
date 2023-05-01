@@ -3,6 +3,8 @@ FROM node:17-alpine
 
 WORKDIR /app
 
+RUN mkdir /result_data
+
 COPY package*.json ./
 
 RUN npm install
