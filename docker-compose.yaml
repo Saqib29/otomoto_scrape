@@ -1,0 +1,6 @@
+version: '3'
+services:
+  scrape:
+    build: .
+    volumes:
+      - ./result_data:/app/result_data
